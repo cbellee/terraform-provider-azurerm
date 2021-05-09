@@ -56,6 +56,12 @@ func resourceDataFactoryIntegrationRuntimeAzure() *schema.Resource {
 				ValidateFunc: validate.DataFactoryName(),
 			},
 
+			"enable_managed_virtual_network": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+
 			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"location": azure.SchemaLocation(),
@@ -120,6 +126,7 @@ func resourceDataFactoryIntegrationRuntimeAzureCreateUpdate(d *schema.ResourceDa
 		ManagedIntegrationRuntimeTypeProperties: &datafactory.ManagedIntegrationRuntimeTypeProperties{
 			ComputeProperties: expandDataFactoryIntegrationRuntimeAzureComputeProperties(d),
 		},
+		ManagedVirtualNetwork: createDataFactoryIntegrationRuntimeAzureManagedVirtualNetworkReference(d, meta),
 	}
 
 	basicIntegrationRuntime, _ := managedIntegrationRuntime.AsBasicIntegrationRuntime()
@@ -246,4 +253,51 @@ func expandDataFactoryIntegrationRuntimeAzureComputeProperties(d *schema.Resourc
 			TimeToLive:  &timeToLiveMin,
 		},
 	}
+}
+
+func createDataFactoryIntegrationRuntimeAzureManagedVirtualNetworkReference(d *schema.ResourceData, meta interface{}) *datafactory.ManagedVirtualNetworkReference {
+	if bool(d.Get("enable_managed_virtual_network").(bool)) {
+		managedVirtualNetworkName := "default"
+		factoryName := d.Get("data_factory_name").(string)
+		resourceGroup := d.Get("resource_group_name").(string)
+		managedVirtualNetworkReference, _ := managedVirtualNetworkCreateUpdate(d, meta, resourceGroup, factoryName, managedVirtualNetworkName)
+		return managedVirtualNetworkReference
+	}
+
+	return nil
+}
+
+func managedVirtualNetworkCreateUpdate(d *schema.ResourceData, meta interface{}, resourceGroup string, factoryName string, managedVirtualNetworkName string) (*datafactory.ManagedVirtualNetworkReference, error) {
+	client := meta.(*clients.Client).DataFactory.ManagedVirtualNetworksClient
+	ctx, cancel := timeouts.ForCreateUpdate(meta.(*clients.Client).StopContext, d)
+	defer cancel()
+
+	managedVirtualNetwork := datafactory.ManagedVirtualNetwork{
+		AdditionalProperties: nil,
+	}
+
+	managedVirtualNetworkResource := datafactory.ManagedVirtualNetworkResource{
+		Properties: &managedVirtualNetwork,
+	}
+
+	if _, err := client.CreateOrUpdate(ctx, resourceGroup, factoryName, managedVirtualNetworkName, managedVirtualNetworkResource, "*"); err != nil {
+		return nil, fmt.Errorf("Error creating/updating Data Factory Managed Virtual Network (Resource Group %q, Data Factory %q, Managed Virtual Network %q): %+v", resourceGroup, factoryName, managedVirtualNetworkName, err)
+	}
+
+	resp, err := client.Get(ctx, resourceGroup, factoryName, managedVirtualNetworkName, "")
+	if err != nil {
+		return nil, fmt.Errorf("Error retrieving Data Factory Managed Virtual Network (Resource Group %q, Data Factory %q, Managed Virtual Network %q): %+v", resourceGroup, factoryName, managedVirtualNetworkName, err)
+	}
+
+	if resp.ID == nil {
+		return nil, fmt.Errorf("Cannot read Data Factory Managed Virtual Network (Resource Group %q, Data Factory %q, Managed Virtual Network %q) ID", resourceGroup, factoryName, managedVirtualNetworkName)
+	}
+
+	managedVirtualNetworkType := "ManagedVirtualNetwork"
+	managedVirtualNetworkReference := datafactory.ManagedVirtualNetworkReference{
+		Type:          &managedVirtualNetworkType,
+		ReferenceName: &managedVirtualNetworkName,
+	}
+
+	return &managedVirtualNetworkReference, nil
 }
